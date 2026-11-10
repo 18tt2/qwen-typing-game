@@ -1,0 +1,747 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>打字小能手 - 键盘鼠标练习游戏</title>
+<script src="./vendor/react.production.min.js"></script>
+<script src="./vendor/react-dom.production.min.js"></script>
+<script src="./vendor/babel.min.js"></script>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body, #root { width: 100%; height: 100%; }
+  body { font-family: -apple-system, "Microsoft YaHei", "PingFang SC", sans-serif; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel" data-presets="react">
+const { useState, useEffect, useCallback } = React;
+
+
+const App = () => {
+  const [gameMode, setGameMode] = useState('menu'); // menu, mouseGame, keyboardGame, paused, gameOver
+  const [difficulty, setDifficulty] = useState(1); // 1: easy, 2: medium, 3: hard
+  const [score, setScore] = useState(0);
+  const [timeLeft, setTimeLeft] = useState(60);
+  const [targets, setTargets] = useState([]);
+  const [mousePosition, setMousePosition] = useState({ x: 0, y: 0 });
+  const [combo, setCombo] = useState(0);
+  const [showCombo, setShowCombo] = useState(false);
+  const [currentLevel, setCurrentLevel] = useState(1);
+  const [keysPressed, setKeysPressed] = useState(new Set());
+  const [requiredKey, setRequiredKey] = useState('');
+  const [keyTargets, setKeyTargets] = useState([]);
+  const [gameType, setGameType] = useState(''); // 'mouse' or 'keyboard'
+
+  // 难度设置
+  const difficultySettings = {
+    1: { 
+      mouse: { targetCount: 5, targetSpeed: 2, targetSize: 60, spawnRate: 1500 },
+      keyboard: { targetCount: 3, fallSpeed: 1, spawnRate: 2000, keyOptions: ['a', 's', 'd', 'f', 'j', 'k', 'l', ';'] }
+    },
+    2: { 
+      mouse: { targetCount: 8, targetSpeed: 3, targetSize: 50, spawnRate: 1000 },
+      keyboard: { targetCount: 5, fallSpeed: 2, spawnRate: 1500, keyOptions: ['a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l', ';', 'q', 'w', 'e', 'r', 't', 'y', 'u', 'i', 'o', 'p'] }
+    },
+    3: { 
+      mouse: { targetCount: 12, targetSpeed: 4, targetSize: 40, spawnRate: 700 },
+      keyboard: { targetCount: 8, fallSpeed: 3, spawnRate: 1000, keyOptions: 'abcdefghijklmnopqrstuvwxyz1234567890'.split('') }
+    }
+  };
+
+  // 创建鼠标游戏目标
+  const createMouseTarget = useCallback(() => {
+    const settings = difficultySettings[difficulty].mouse;
+    const id = Date.now() + Math.random();
+    const type = Math.floor(Math.random() * 4); // 0: circle, 1: square, 2: triangle, 3: star
+    const x = Math.random() * (window.innerWidth - settings.targetSize);
+    const y = Math.random() * (window.innerHeight - settings.targetSize - 100);
+    
+    return {
+      id,
+      type,
+      x,
+      y,
+      size: settings.targetSize,
+      vx: (Math.random() - 0.5) * settings.targetSpeed,
+      vy: (Math.random() - 0.5) * settings.targetSpeed,
+      color: getRandomColor(),
+      points: 10 + combo * 5,
+      createdAt: Date.now()
+    };
+  }, [difficulty, combo]);
+
+  // 创建键盘游戏目标
+  const createKeyboardTarget = useCallback(() => {
+    const settings = difficultySettings[difficulty].keyboard;
+    const id = Date.now() + Math.random();
+    const key = settings.keyOptions[Math.floor(Math.random() * settings.keyOptions.length)];
+    
+    return {
+      id,
+      key,
+      x: Math.random() * (window.innerWidth - 80),
+      y: -50,
+      speed: settings.fallSpeed + Math.random() * 0.5,
+      color: getRandomColor(),
+      points: 10 + combo * 5,
+      createdAt: Date.now()
+    };
+  }, [difficulty, combo]);
+
+  // 随机颜色
+  const getRandomColor = () => {
+    const colors = [
+      'bg-red-500', 'bg-blue-500', 'bg-green-500', 
+      'bg-yellow-500', 'bg-purple-500', 'bg-pink-500',
+      'bg-orange-500', 'bg-teal-500'
+    ];
+    return colors[Math.floor(Math.random() * colors.length)];
+  };
+
+  // 开始鼠标游戏
+  const startMouseGame = () => {
+    setGameType('mouse');
+    setGameMode('playing');
+    setScore(0);
+    setTimeLeft(60);
+    setCombo(0);
+    setCurrentLevel(1);
+    setTargets([]);
+    setKeysPressed(new Set());
+    
+    // 创建初始目标
+    const initialTargets = [];
+    const settings = difficultySettings[difficulty].mouse;
+    for (let i = 0; i < settings.targetCount; i++) {
+      initialTargets.push(createMouseTarget());
+    }
+    setTargets(initialTargets);
+  };
+
+  // 开始键盘游戏
+  const startKeyboardGame = () => {
+    setGameType('keyboard');
+    setGameMode('playing');
+    setScore(0);
+    setTimeLeft(60);
+    setCombo(0);
+    setCurrentLevel(1);
+    setKeyTargets([]);
+    setKeysPressed(new Set());
+    
+    // 设置初始需要按的键
+    const settings = difficultySettings[difficulty].keyboard;
+    setRequiredKey(settings.keyOptions[Math.floor(Math.random() * settings.keyOptions.length)]);
+    
+    // 创建初始目标
+    const initialTargets = [];
+    for (let i = 0; i < 2; i++) {
+      initialTargets.push(createKeyboardTarget());
+    }
+    setKeyTargets(initialTargets);
+  };
+
+  // 更新鼠标游戏目标位置
+  useEffect(() => {
+    if (gameMode !== 'playing' || gameType !== 'mouse') return;
+
+    const settings = difficultySettings[difficulty].mouse;
+    const interval = setInterval(() => {
+      setTargets(prev => prev.map(target => ({
+        ...target,
+        x: Math.max(0, Math.min(window.innerWidth - target.size, target.x + target.vx)),
+        y: Math.max(0, Math.min(window.innerHeight - target.size - 100, target.y + target.vy)),
+        vx: (target.x <= 0 || target.x >= window.innerWidth - target.size) ? -target.vx : target.vx,
+        vy: (target.y <= 0 || target.y >= window.innerHeight - target.size - 100) ? -target.vy : target.vy
+      })));
+    }, 50);
+
+    // 生成新目标
+    const spawnInterval = setInterval(() => {
+      if (targets.length < settings.targetCount) {
+        setTargets(prev => [...prev, createMouseTarget()]);
+      }
+    }, settings.spawnRate);
+
+    return () => {
+      clearInterval(interval);
+      clearInterval(spawnInterval);
+    };
+  }, [gameMode, gameType, difficulty, createMouseTarget, targets.length]);
+
+  // 更新键盘游戏目标位置
+  useEffect(() => {
+    if (gameMode !== 'playing' || gameType !== 'keyboard') return;
+
+    const settings = difficultySettings[difficulty].keyboard;
+    const interval = setInterval(() => {
+      setKeyTargets(prev => {
+        const updated = prev.map(target => ({
+          ...target,
+          y: target.y + target.speed
+        })).filter(target => target.y < window.innerHeight + 50);
+        
+        // 如果目标掉出屏幕，减少连击并扣分
+        if (prev.length > updated.length) {
+          setCombo(0);
+          setScore(prevScore => Math.max(0, prevScore - 5));
+        }
+        
+        return updated;
+      });
+    }, 50);
+
+    // 生成新目标
+    const spawnInterval = setInterval(() => {
+      if (keyTargets.length < settings.targetCount) {
+        setKeyTargets(prev => [...prev, createKeyboardTarget()]);
+      }
+    }, settings.spawnRate);
+
+    return () => {
+      clearInterval(interval);
+      clearInterval(spawnInterval);
+    };
+  }, [gameMode, gameType, difficulty, createKeyboardTarget, keyTargets.length]);
+
+  // 倒计时
+  useEffect(() => {
+    if (gameMode !== 'playing') return;
+
+    const timer = setInterval(() => {
+      setTimeLeft(prev => {
+        if (prev <= 1) {
+          clearInterval(timer);
+          setGameMode('gameOver');
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, [gameMode]);
+
+  // 监听鼠标移动
+  useEffect(() => {
+    const handleMouseMove = (e) => {
+      setMousePosition({ x: e.clientX, y: e.clientY });
+    };
+
+    if (gameMode === 'playing' && gameType === 'mouse') {
+      window.addEventListener('mousemove', handleMouseMove);
+    }
+
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+    };
+  }, [gameMode, gameType]);
+
+  // 监听键盘事件（仅用于键盘游戏）
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (gameMode !== 'playing' || gameType !== 'keyboard') return;
+      
+      const key = e.key.toLowerCase();
+      setKeysPressed(prev => new Set([...prev, key]));
+      
+      // 检查是否按对了键
+      if (key === requiredKey) {
+        // 播放音效
+        playSound('correct');
+        
+        // 增加分数
+        setScore(prev => prev + 10 + combo * 5);
+        setCombo(prev => prev + 1);
+        setShowCombo(true);
+        setTimeout(() => setShowCombo(false), 1000);
+        
+        // 生成新的要求键
+        const settings = difficultySettings[difficulty].keyboard;
+        setRequiredKey(settings.keyOptions[Math.floor(Math.random() * settings.keyOptions.length)]);
+        
+        // 检查是否有匹配的下落键可以消除
+        setKeyTargets(prev => {
+          const firstMatch = prev.find(target => target.key === key);
+          if (firstMatch) {
+            return prev.filter(target => target.id !== firstMatch.id);
+          }
+          return prev;
+        });
+      } else if (key.length === 1) {
+        // 按错键扣分
+        setScore(prev => Math.max(0, prev - 2));
+        setCombo(0);
+        playSound('wrong');
+      }
+      
+      // 暂停游戏
+      if (e.key === 'Escape') {
+        setGameMode(prev => prev === 'playing' ? 'paused' : prev === 'paused' ? 'playing' : prev);
+      }
+    };
+
+    const handleKeyUp = (e) => {
+      if (gameMode === 'playing' && gameType === 'keyboard') {
+        setKeysPressed(prev => {
+          const newSet = new Set(prev);
+          newSet.delete(e.key.toLowerCase());
+          return newSet;
+        });
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('keyup', handleKeyUp);
+
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('keyup', handleKeyUp);
+    };
+  }, [gameMode, gameType, difficulty, requiredKey]);
+
+  // 点击鼠标游戏目标
+  const handleMouseTargetClick = (targetId) => {
+    if (gameMode !== 'playing' || gameType !== 'mouse') return;
+
+    const clickedTarget = targets.find(t => t.id === targetId);
+    if (!clickedTarget) return;
+
+    // 播放点击音效
+    playSound('click');
+
+    setScore(prev => prev + clickedTarget.points);
+    setCombo(prev => prev + 1);
+    setShowCombo(true);
+    setTimeout(() => setShowCombo(false), 1000);
+
+    // 移除被点击的目标
+    setTargets(prev => prev.filter(t => t.id !== targetId));
+
+    // 添加新目标
+    const settings = difficultySettings[difficulty].mouse;
+    if (targets.length < settings.targetCount) {
+      setTargets(prev => [...prev, createMouseTarget()]);
+    }
+
+    // 检查升级
+    if (score > 0 && score % 100 === 0) {
+      setCurrentLevel(prev => prev + 1);
+    }
+  };
+
+  // 播放音效（模拟）
+  const playSound = (type) => {
+    // 在实际应用中，这里会播放真实的音效
+    console.log(`Playing ${type} sound`);
+  };
+
+  // 渲染鼠标游戏目标形状
+  const renderMouseTarget = (target) => {
+    const commonClasses = `${target.color} cursor-pointer transform transition-transform hover:scale-110 active:scale-95`;
+    
+    switch (target.type) {
+      case 0: // 圆形
+        return (
+          <div
+            key={target.id}
+            className={`${commonClasses} rounded-full`}
+            style={{
+              width: target.size,
+              height: target.size,
+              left: target.x,
+              top: target.y,
+              position: 'absolute',
+              boxShadow: '0 4px 8px rgba(0,0,0,0.3)',
+              animation: 'float 2s ease-in-out infinite'
+            }}
+            onClick={() => handleMouseTargetClick(target.id)}
+          />
+        );
+      case 1: // 方形
+        return (
+          <div
+            key={target.id}
+            className={`${commonClasses}`}
+            style={{
+              width: target.size,
+              height: target.size,
+              left: target.x,
+              top: target.y,
+              position: 'absolute',
+              boxShadow: '0 4px 8px rgba(0,0,0,0.3)',
+              animation: 'bounce 1.5s ease-in-out infinite'
+            }}
+            onClick={() => handleMouseTargetClick(target.id)}
+          />
+        );
+      case 2: // 三角形
+        return (
+          <div
+            key={target.id}
+            className={`${commonClasses}`}
+            style={{
+              width: 0,
+              height: 0,
+              borderLeft: `${target.size/2}px solid transparent`,
+              borderRight: `${target.size/2}px solid transparent`,
+              borderBottom: `${target.size}px solid ${target.color.replace('bg-', '').replace('-500', '')}`,
+              left: target.x,
+              top: target.y,
+              position: 'absolute',
+              animation: 'spin 3s linear infinite'
+            }}
+            onClick={() => handleMouseTargetClick(target.id)}
+          />
+        );
+      case 3: // 星星
+        return (
+          <div
+            key={target.id}
+            className={`${commonClasses}`}
+            style={{
+              clipPath: 'polygon(50% 0%, 61% 35%, 98% 35%, 68% 57%, 79% 91%, 50% 70%, 21% 91%, 32% 57%, 2% 35%, 39% 35%)',
+              width: target.size,
+              height: target.size,
+              left: target.x,
+              top: target.y,
+              position: 'absolute',
+              backgroundColor: target.color.replace('bg-', '').replace('-500', ''),
+              boxShadow: '0 4px 8px rgba(0,0,0,0.3)',
+              animation: 'pulse 1s ease-in-out infinite'
+            }}
+            onClick={() => handleMouseTargetClick(target.id)}
+          />
+        );
+      default:
+        return null;
+    }
+  };
+
+  // 渲染键盘游戏目标
+  const renderKeyboardTarget = (target) => {
+    return (
+      <div
+        key={target.id}
+        className={`${target.color} flex items-center justify-center font-bold text-white text-2xl rounded-lg`}
+        style={{
+          width: 60,
+          height: 60,
+          left: target.x,
+          top: target.y,
+          position: 'absolute',
+          boxShadow: '0 4px 8px rgba(0,0,0,0.3)',
+          transform: 'rotate(' + (target.id % 360) + 'deg)',
+          animation: 'fall linear'
+        }}
+      >
+        {target.key.toUpperCase()}
+      </div>
+    );
+  };
+
+  // 渲染主菜单
+  if (gameMode === 'menu') {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-purple-400 via-pink-500 to-red-500 flex flex-col items-center justify-center p-4">
+        <div className="text-center mb-8">
+          <h1 className="text-6xl font-bold text-white mb-4 drop-shadow-lg">
+            鼠标键盘大冒险
+          </h1>
+          <p className="text-xl text-white mb-8 drop-shadow">
+            选择单独练习鼠标或键盘操作！
+          </p>
+        </div>
+
+        <div className="bg-white rounded-2xl p-8 shadow-2xl mb-8 w-full max-w-md">
+          <h2 className="text-2xl font-bold text-gray-800 mb-6">选择难度</h2>
+          
+          <div className="space-y-4 mb-8">
+            <button
+              onClick={() => setDifficulty(1)}
+              className={`w-full py-3 px-6 rounded-xl font-bold text-lg transition-all ${
+                difficulty === 1 
+                ? 'bg-green-500 text-white transform scale-105' 
+                : 'bg-gray-200 text-gray-700 hover:bg-green-400 hover:text-white'
+              }`}
+            >
+              🟢 简单模式
+            </button>
+            
+            <button
+              onClick={() => setDifficulty(2)}
+              className={`w-full py-3 px-6 rounded-xl font-bold text-lg transition-all ${
+                difficulty === 2 
+                ? 'bg-yellow-500 text-white transform scale-105' 
+                : 'bg-gray-200 text-gray-700 hover:bg-yellow-400 hover:text-white'
+              }`}
+            >
+              🟡 中等模式
+            </button>
+            
+            <button
+              onClick={() => setDifficulty(3)}
+              className={`w-full py-3 px-6 rounded-xl font-bold text-lg transition-all ${
+                difficulty === 3 
+                ? 'bg-red-500 text-white transform scale-105' 
+                : 'bg-gray-200 text-gray-700 hover:bg-red-400 hover:text-white'
+              }`}
+            >
+              🔴 困难模式
+            </button>
+          </div>
+
+          <div className="space-y-4">
+            <button
+              onClick={startMouseGame}
+              className="w-full py-4 px-6 bg-blue-500 hover:bg-blue-600 text-white font-bold text-xl rounded-xl transition-all transform hover:scale-105 shadow-lg"
+            >
+              🖱️ 鼠标练习游戏
+            </button>
+            
+            <button
+              onClick={startKeyboardGame}
+              className="w-full py-4 px-6 bg-indigo-500 hover:bg-indigo-600 text-white font-bold text-xl rounded-xl transition-all transform hover:scale-105 shadow-lg"
+            >
+              ⌨️ 键盘练习游戏
+            </button>
+          </div>
+        </div>
+
+        <div className="text-white text-center max-w-md">
+          <h3 className="text-lg font-bold mb-2">游戏说明:</h3>
+          <ul className="text-left space-y-1 text-sm">
+            <li className="font-bold">🖱️ 鼠标游戏:</li>
+            <li>🎯 用鼠标点击移动的彩色目标</li>
+            <li>✨ 连击获得更高分数</li>
+            <li>⏱️ 60秒内获得最高分</li>
+            <li className="font-bold mt-2">⌨️ 键盘游戏:</li>
+            <li>🔤 按下屏幕上显示的字母键</li>
+            <li>🎯 击中下落的字母获得分数</li>
+            <li>⏸️ 按ESC键暂停游戏</li>
+          </ul>
+        </div>
+
+        <style jsx>{`
+          @keyframes float {
+            0%, 100% { transform: translateY(0px); }
+            50% { transform: translateY(-10px); }
+          }
+          @keyframes bounce {
+            0%, 100% { transform: translateY(0px); }
+            50% { transform: translateY(-15px); }
+          }
+          @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+          }
+          @keyframes pulse {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.1); }
+          }
+          @keyframes fall {
+            0% { transform: translateY(0) rotate(0deg); }
+            100% { transform: translateY(100vh) rotate(360deg); }
+          }
+        `}</style>
+      </div>
+    );
+  }
+
+  // 渲染游戏界面
+  if (gameMode === 'playing' || gameMode === 'paused') {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-blue-400 via-purple-500 to-pink-500 overflow-hidden relative">
+        {/* 游戏UI */}
+        <div className="absolute top-0 left-0 right-0 z-10 bg-white bg-opacity-20 backdrop-blur-sm p-4 flex justify-between items-center">
+          <div className="flex space-x-6">
+            <div className="bg-white bg-opacity-30 rounded-lg px-4 py-2">
+              <span className="text-white font-bold">分数: {score}</span>
+            </div>
+            <div className="bg-white bg-opacity-30 rounded-lg px-4 py-2">
+              <span className="text-white font-bold">时间: {timeLeft}s</span>
+            </div>
+            <div className="bg-white bg-opacity-30 rounded-lg px-4 py-2">
+              <span className="text-white font-bold">关卡: {currentLevel}</span>
+            </div>
+            <div className="bg-white bg-opacity-30 rounded-lg px-4 py-2">
+              <span className="text-white font-bold">连击: {combo}</span>
+            </div>
+          </div>
+          
+          <button
+            onClick={() => setGameMode('menu')}
+            className="bg-red-500 hover:bg-red-600 text-white font-bold py-2 px-4 rounded-lg transition-all"
+          >
+            退出
+          </button>
+        </div>
+
+        {/* 组合提示 */}
+        {showCombo && combo > 1 && (
+          <div 
+            className="absolute top-20 left-1/2 transform -translate-x-1/2 bg-yellow-400 text-black font-bold text-2xl py-2 px-6 rounded-full animate-bounce z-20"
+            style={{ animation: 'bounce 0.5s ease-in-out' }}
+          >
+            {combo}x 连击!
+          </div>
+        )}
+
+        {/* 鼠标游戏界面 */}
+        {gameType === 'mouse' && (
+          <>
+            {/* 游戏区域 */}
+            <div className="w-full h-full">
+              {targets.map(target => renderMouseTarget(target))}
+              
+              {/* 鼠标跟随效果 */}
+              <div
+                className="absolute w-8 h-8 bg-white rounded-full border-2 border-blue-500 pointer-events-none z-10 transform -translate-x-1/2 -translate-y-1/2"
+                style={{ left: mousePosition.x, top: mousePosition.y }}
+              />
+            </div>
+          </>
+        )}
+
+        {/* 键盘游戏界面 */}
+        {gameType === 'keyboard' && (
+          <>
+            {/* 需要按的键提示 */}
+            <div className="absolute top-20 left-1/2 transform -translate-x-1/2 bg-yellow-400 text-black font-bold text-4xl py-4 px-8 rounded-full shadow-lg z-10 animate-pulse">
+              请按: {requiredKey.toUpperCase()}
+            </div>
+            
+            {/* 键盘目标 */}
+            <div className="w-full h-full">
+              {keyTargets.map(target => renderKeyboardTarget(target))}
+            </div>
+            
+            {/* 按下的键显示 */}
+            <div className="absolute bottom-20 left-1/2 transform -translate-x-1/2 bg-white bg-opacity-30 rounded-lg px-4 py-2">
+              <span className="text-white font-bold">
+                按下的键: {Array.from(keysPressed).join(', ') || '无'}
+              </span>
+            </div>
+          </>
+        )}
+
+        {/* 暂停界面 */}
+        {gameMode === 'paused' && (
+          <div className="absolute inset-0 bg-black bg-opacity-50 flex items-center justify-center z-20">
+            <div className="bg-white rounded-2xl p-8 text-center shadow-2xl">
+              <h2 className="text-3xl font-bold text-gray-800 mb-6">⏸️ 游戏暂停</h2>
+              <p className="text-lg text-gray-600 mb-6">按ESC键继续游戏</p>
+              <button
+                onClick={() => setGameMode('playing')}
+                className="bg-blue-500 hover:bg-blue-600 text-white font-bold py-3 px-6 rounded-lg mr-4 transition-all"
+              >
+                继续游戏
+              </button>
+              <button
+                onClick={() => setGameMode('menu')}
+                className="bg-gray-500 hover:bg-gray-600 text-white font-bold py-3 px-6 rounded-lg transition-all"
+              >
+                返回菜单
+              </button>
+            </div>
+          </div>
+        )}
+
+        <style jsx>{`
+          @keyframes bounce {
+            0%, 100% { transform: translateY(0px) scale(1); }
+            50% { transform: translateY(-20px) scale(1.2); }
+          }
+        `}</style>
+      </div>
+    );
+  }
+
+  // 游戏结束界面
+  if (gameMode === 'gameOver') {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-green-400 via-blue-500 to-purple-500 flex flex-col items-center justify-center p-4">
+        <div className="text-center mb-8">
+          <h1 className="text-6xl font-bold text-white mb-4 drop-shadow-lg">
+            🎉 游戏结束! 🎉
+          </h1>
+          <div className="bg-white bg-opacity-30 rounded-2xl p-6 mb-8">
+            <p className="text-3xl text-white font-bold mb-2">最终分数: {score}</p>
+            <p className="text-xl text-white mb-2">最高连击: {combo}x</p>
+            <p className="text-xl text-white">完成关卡: {currentLevel}</p>
+            <p className="text-xl text-white">游戏类型: {gameType === 'mouse' ? '鼠标练习' : '键盘练习'}</p>
+          </div>
+        </div>
+
+        <div className="bg-white rounded-2xl p-8 shadow-2xl mb-8 w-full max-w-md">
+          <h2 className="text-2xl font-bold text-gray-800 mb-6">游戏评价</h2>
+          
+          <div className="mb-8">
+            {score < 100 && (
+              <p className="text-lg text-gray-700">继续加油！多练习{gameType === 'mouse' ? '鼠标' : '键盘'}操作哦！</p>
+            )}
+            {score >= 100 && score < 300 && (
+              <p className="text-lg text-gray-700">不错哦！你的{gameType === 'mouse' ? '鼠标' : '键盘'}操作越来越熟练了！</p>
+            )}
+            {score >= 300 && score < 500 && (
+              <p className="text-lg text-gray-700">太棒了！你已经掌握了{gameType === 'mouse' ? '鼠标' : '键盘'}的基本操作！</p>
+            )}
+            {score >= 500 && (
+              <p className="text-lg text-gray-700">超级厉害！你是{gameType === 'mouse' ? '鼠标' : '键盘'}操作的小高手！</p>
+            )}
+          </div>
+
+          <div className="space-y-4">
+            <button
+              onClick={gameType === 'mouse' ? startMouseGame : startKeyboardGame}
+              className="w-full py-4 px-6 bg-green-500 hover:bg-green-600 text-white font-bold text-xl rounded-xl transition-all transform hover:scale-105 shadow-lg"
+            >
+              🔄 再玩一次
+            </button>
+            
+            <button
+              onClick={() => setGameMode('menu')}
+              className="w-full py-4 px-6 bg-blue-500 hover:bg-blue-600 text-white font-bold text-xl rounded-xl transition-all transform hover:scale-105 shadow-lg"
+            >
+              🏠 返回菜单
+            </button>
+          </div>
+        </div>
+
+        <div className="text-white text-center max-w-md">
+          <h3 className="text-lg font-bold mb-2">游戏技巧:</h3>
+          <ul className="text-left space-y-1 text-sm">
+            {gameType === 'mouse' && (
+              <>
+                <li>🎯 快速点击目标可以获得连击分数</li>
+                <li>🖱️ 练习精准的鼠标控制</li>
+                <li>⏱️ 注意时间，争取在时间内获得最高分</li>
+                <li>✨ 不同形状的目标分数相同，但移动方式不同</li>
+              </>
+            )}
+            {gameType === 'keyboard' && (
+              <>
+                <li>🔤 专注看需要按的键</li>
+                <li>⌨️ 练习手指的键盘定位</li>
+                <li>🎯 尽量在字母掉到底部前按下</li>
+                <li>✨ 连续按对键可以获得连击分数</li>
+              </>
+            )}
+          </ul>
+        </div>
+      </div>
+    );
+  }
+
+  return null;
+};
+
+
+
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(<App />);
+</script>
+</body>
+</html>
